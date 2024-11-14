@@ -1,41 +1,83 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
-import { RpcException } from '@nestjs/microservices';
+import { ClientProxy, RpcException } from '@nestjs/microservices';
+import { NATS_SERVICE } from 'src/config';
+import { catchError, firstValueFrom } from 'rxjs';
 
 
 @Injectable()
 export class OrdersService {
 
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    @Inject(NATS_SERVICE) private readonly client: ClientProxy,
+  ) { }
 
   async create(createOrderDto: CreateOrderDto) {
-    const { userId, clientLastname, clientName, total, orderDetails } = createOrderDto;
-    // ? Todo: USUARIO EXISTA
+    try {
+      const { userId, clientLastname, clientName, total, orderDetails } = createOrderDto;
 
-    // VERIFICAR QUE EL PRODUCTO EXISTA 
+      // ? Todo: USUARIO EXISTA
 
-    // VERIFICAR QUE EL STOCK DEL PRODUCTO 
+      // VERIFICAR QUE EL PRODUCTO EXISTA
+      const productIds = orderDetails.map(item => item.productId);
+      await firstValueFrom(this.client.send("validateProductsIds", productIds))
 
-    // CREAR LA ORDEN
-    const order = await this.prisma.order.create({
-      data: {
-        clientLastname,
-        clientName,
-        total,
-        userId
+
+      // VERIFICAR QUE EL STOCK DEL PRODUCTO 
+      const productIdsQuantities = orderDetails.map(item => {
+        return { id: item.productId, quantity: item.quantity }
+      })
+
+      const updateProductsResponse = await firstValueFrom(
+        this.client.send("updateProductStock", productIdsQuantities)
+      );
+
+      if (!updateProductsResponse) {
+        throw new RpcException({
+          message: "Stock insuficiente",
+          statusCode: HttpStatus.BAD_REQUEST,
+        })
       }
-    })
+
+      // CREAR LA ORDEN
+      const order = await this.prisma.order.create({
+        data: {
+          clientLastname,
+          clientName,
+          total,
+          userId,
+          orderDetails: {
+            create: orderDetails
+          }
+        },
+        include: {
+          orderDetails: {
+            select: {
+              productId: true,
+              productName: true,
+              subTotal: true,
+              quantity: true,
+              productPriceSale: true
+            }
+          }
+        }
+      })
 
 
-    return {
-      order,
-      message: "Ordern registrada con exito"
+      return {
+        order,
+        message: "Ordern registrada con exito"
+      }
+
+    } catch (error) {
+      throw new RpcException({
+        message: error.message,
+        statusCode: error.status,
+      })
     }
-
-
-
   }
 
   async findAll(paginationDto: PaginationDto) {

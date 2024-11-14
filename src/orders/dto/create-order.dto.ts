@@ -1,4 +1,6 @@
-import { IsDecimal, IsNumber, IsOptional, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import { OrderDetailDto } from "./order-detail.dto";
+import { ArrayMinSize, IsArray, IsNumber, IsString, ValidateNested } from "class-validator";
 
 
 
@@ -12,19 +14,14 @@ export class CreateOrderDto {
 
     @IsString()
     clientLastname: string;
-
-    @IsOptional()
-    orderDetails?: object[];
     
     @IsNumber()
     total: number;
 
-
-
-    // productId
-    // productName
-    // productPriceSale
-    // subTotal
-    // quantity
+    @IsArray({ message: "Debe agregar los productos" })
+    @ArrayMinSize(1, { message: "Debe agregar minimo un item" })
+    @ValidateNested({ each: true })
+    @Type(() => OrderDetailDto)
+    orderDetails: OrderDetailDto[]
 
 }
